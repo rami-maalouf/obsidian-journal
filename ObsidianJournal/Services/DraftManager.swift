@@ -92,7 +92,10 @@ class DraftManager: ObservableObject {
 
     func updateDraftDate(_ date: Date) {
         guard var draft = currentDraft else { return }
-        draft.createdAt = date
+        let calendar = Calendar.current
+        // Normalize to midday so journal-day logic doesn't shift selected dates.
+        let normalizedDate = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: date) ?? date
+        draft.createdAt = normalizedDate
         draft.modifiedAt = Date()
 
         objectWillChange.send()

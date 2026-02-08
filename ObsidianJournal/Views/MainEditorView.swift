@@ -296,8 +296,12 @@ struct MainEditorView: View {
                 let llmService = LLMService()
                 let date = draft.createdAt.journalDate
 
-                // Step 1: Read existing daily note or get default template
-                let existingNote = try journalService.readDailyNote(for: date) ?? journalService.getDefaultTemplate(for: date)
+                // Step 1: Ensure daily note exists from the canonical template path.
+                // If missing, this creates it from inferred template (or default fallback) first.
+                let existingNote = try journalService.getOrCreateDailyNote(
+                    for: date,
+                    template: vaultManager.inferredTemplate
+                )
 
                 // Step 2: Call AI to extract structured updates from transcript
                 let populationResponse = try await llmService.populateTemplate(
@@ -364,7 +368,8 @@ struct MainEditorView: View {
     }
 
     private var headerTitle: String {
-        guard let date = draftManager.currentDraft?.createdAt else { return "Journal" }
+        guard let rawDate = draftManager.currentDraft?.createdAt else { return "Journal" }
+        let date = rawDate.journalDate
         let calendar = Calendar.current
 
         // Check relative dates

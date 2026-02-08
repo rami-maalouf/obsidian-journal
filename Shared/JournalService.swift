@@ -77,21 +77,25 @@ class JournalService: ObservableObject {
 
     private func applyMetricUpdate(to note: String, field: String, value: String) -> String {
         var lines = note.components(separatedBy: "\n")
-        let normalizedField = field.trimmingCharacters(in: CharacterSet(charactersIn: "#- "))
+        let normalizedField = normalizeMetricFieldName(field)
 
         for (index, line) in lines.enumerated() {
-            if line.contains("\(normalizedField):") {
-                if let colonRange = line.range(of: ":") {
-                    let beforeColon = String(line[..<colonRange.upperBound])
-                    let afterColon = String(line[colonRange.upperBound...]).trimmingCharacters(in: .whitespaces)
+            guard let colonRange = line.range(of: ":") else { continue }
 
-                    if afterColon.isEmpty {
-                        lines[index] = beforeColon + " " + value
-                        Logger.journal.debug("Updated metric '\(field)' to '\(value)'")
-                    }
-                }
-                break
+            let lhs = String(line[..<colonRange.lowerBound])
+            let normalizedLineField = normalizeMetricFieldName(lhs)
+            guard normalizedLineField.caseInsensitiveCompare(normalizedField) == .orderedSame else { continue }
+
+            let beforeColon = String(line[..<colonRange.upperBound])
+            let afterColon = String(line[colonRange.upperBound...]).trimmingCharacters(in: .whitespaces)
+
+            if afterColon.isEmpty {
+                lines[index] = beforeColon + " " + value
+                Logger.journal.debug("Updated metric '\(field)' to '\(value)'")
+            } else {
+                Logger.journal.debug("Skipped metric '\(field)' because it already has a value")
             }
+            break
         }
 
         return lines.joined(separator: "\n")
@@ -99,11 +103,12 @@ class JournalService: ObservableObject {
 
     private func applyAppendUpdate(to note: String, field: String, value: String) -> String {
         var lines = note.components(separatedBy: "\n")
+        let normalizedField = field.trimmingCharacters(in: .whitespacesAndNewlines)
 
         for (index, line) in lines.enumerated() {
             let trimmedLine = line.trimmingCharacters(in: .whitespaces)
 
-            if trimmedLine == field || trimmedLine.hasPrefix(field) {
+            if trimmedLine == normalizedField {
                 var insertIndex = index + 1
 
                 while insertIndex < lines.count {
@@ -134,9 +139,17 @@ class JournalService: ObservableObject {
         try vaultManager.performInVault { vaultURL in
             let fileName = Self.dateFormatter.string(from: date) + ".md"
             let noteURL = vaultURL.appendingPathComponent(fileName)
-            try content.write(to: noteURL, atomically: true, encoding: .utf8)
+            let sanitizedContent = sanitizePersistedNoteContent(content)
+            try sanitizedContent.write(to: noteURL, atomically: true, encoding: .utf8)
             Logger.journal.info("Saved daily note: \(fileName)")
         }
+    }
+
+    private func normalizeMetricFieldName(_ field: String) -> String {
+        field
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "#-"))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     // MARK: - Template-Based Note Creation
@@ -147,7 +160,8 @@ class JournalService: ObservableObject {
     ///   - template: The InferredTemplate to use (from VaultManager.inferredTemplate)
     /// - Throws: VaultError if vault is not configured
     func createDailyNote(for date: Date, using template: InferredTemplate) throws {
-        let renderedContent = TemplateEngine.render(template, for: date)
+        let sanitizedTemplate = sanitizedTemplateForCreation(template)
+        let renderedContent = TemplateEngine.render(sanitizedTemplate, for: date)
         try saveDailyNote(content: renderedContent, for: date)
         Logger.journal.notice("Created new daily note from inferred template for \(Self.dateFormatter.string(from: date))")
     }
@@ -160,13 +174,19 @@ class JournalService: ObservableObject {
     func getOrCreateDailyNote(for date: Date, template: InferredTemplate?) throws -> String {
         // Check if note already exists
         if let existingNote = try readDailyNote(for: date) {
-            return existingNote
+            let cleanedExisting = sanitizePersistedNoteContent(existingNote)
+            if cleanedExisting != existingNote {
+                try saveDailyNote(content: cleanedExisting, for: date)
+                Logger.journal.info("Removed inference separator markers from existing daily note.")
+            }
+            return cleanedExisting
         }
 
         // Note doesn't exist - create it
         let content: String
         if let inferredTemplate = template {
-            content = TemplateEngine.render(inferredTemplate, for: date)
+            let sanitizedTemplate = sanitizedTemplateForCreation(inferredTemplate)
+            content = TemplateEngine.render(sanitizedTemplate, for: date)
             Logger.journal.info("Creating new note from inferred template")
         } else {
             content = getDefaultTemplate(for: date)
@@ -181,82 +201,134 @@ class JournalService: ObservableObject {
 
     func saveEntry(text: String, date: Date = Date()) async throws {
         Logger.journal.info("Starting saveEntry process...")
-        try vaultManager.performInVault { vaultURL in
-            let fileName = Self.dateFormatter.string(from: date) + ".md"
-            let dailyNoteURL = vaultURL.appendingPathComponent(fileName)
+        let timestamp = DateFormatter.localizedString(from: date, dateStyle: .none, timeStyle: .short)
+        let newContent = """
 
-            let timestamp = DateFormatter.localizedString(from: date, dateStyle: .none, timeStyle: .short)
-            let newContent = """
+        ## \(timestamp) Flash Journal
+        > \(text)
 
-            ## \(timestamp) Flash Journal
-            > \(text)
+        """
 
-            """
-
-            if FileManager.default.fileExists(atPath: dailyNoteURL.path) {
-                let fileHandle = try FileHandle(forWritingTo: dailyNoteURL)
-                fileHandle.seekToEndOfFile()
-                if let data = newContent.data(using: .utf8) {
-                    fileHandle.write(data)
-                }
-                fileHandle.closeFile()
-            } else {
-                let initialContent = """
-                # Daily Note: \(Self.dateFormatter.string(from: date))
-
-                \(newContent)
-                """
-                try initialContent.write(to: dailyNoteURL, atomically: true, encoding: .utf8)
-            }
-            Logger.journal.notice("Entry saved successfully.")
-        }
+        let existingNote = try getOrCreateDailyNote(for: date, template: vaultManager.inferredTemplate)
+        try saveDailyNote(content: existingNote + newContent, for: date)
+        Logger.journal.notice("Entry saved successfully.")
     }
 
     func saveAIEntry(originalText: String, aiResponse: AIResponse, date: Date = Date()) async throws {
         Logger.journal.info("Starting saveAIEntry process...")
-        try vaultManager.performInVault { vaultURL in
-            let fileName = Self.dateFormatter.string(from: date) + ".md"
-            let dailyNoteURL = vaultURL.appendingPathComponent(fileName)
+        let timestamp = DateFormatter.localizedString(from: date, dateStyle: .none, timeStyle: .short)
+        let mdContent = """
 
-            let timestamp = DateFormatter.localizedString(from: date, dateStyle: .none, timeStyle: .short)
+        ## \(timestamp) Voice Journal
+        > \(originalText)
 
-            let mdContent = """
+        ### AI Insights
+        **Summary**: \(aiResponse.summary)
 
-            ## \(timestamp) Voice Journal
-            > \(originalText)
+        **Key Realizations**:
+        \(aiResponse.insights.map { "- " + $0 }.joined(separator: "\n"))
 
-            ### AI Insights
-            **Summary**: \(aiResponse.summary)
+        **Action Items**:
+        \(aiResponse.actionItems.map { "- [ ] " + $0 }.joined(separator: "\n"))
 
-            **Key Realizations**:
-            \(aiResponse.insights.map { "- " + $0 }.joined(separator: "\n"))
+        **Tags**: \(aiResponse.tags.map { "#" + $0 }.joined(separator: " "))
 
-            **Action Items**:
-            \(aiResponse.actionItems.map { "- [ ] " + $0 }.joined(separator: "\n"))
+        """
 
-            **Tags**: \(aiResponse.tags.map { "#" + $0 }.joined(separator: " "))
-
-            """
-
-            if FileManager.default.fileExists(atPath: dailyNoteURL.path) {
-                let fileHandle = try FileHandle(forWritingTo: dailyNoteURL)
-                fileHandle.seekToEndOfFile()
-                if let data = mdContent.data(using: .utf8) {
-                    fileHandle.write(data)
-                }
-                fileHandle.closeFile()
-            } else {
-                let initialContent = """
-                # Daily Note: \(Self.dateFormatter.string(from: date))
-                \(mdContent)
-                """
-                try initialContent.write(to: dailyNoteURL, atomically: true, encoding: .utf8)
-            }
-            Logger.journal.notice("AI Entry saved successfully.")
-        }
+        let existingNote = try getOrCreateDailyNote(for: date, template: vaultManager.inferredTemplate)
+        try saveDailyNote(content: existingNote + mdContent, for: date)
+        Logger.journal.notice("AI Entry saved successfully.")
     }
 
     // MARK: - Helpers
+
+    private func sanitizedTemplateForCreation(_ template: InferredTemplate) -> InferredTemplate {
+        let cleanedTemplate = sanitizeTemplateString(template.template)
+        let cleanedNotes = template.notes.map { sanitizeTemplateString($0) }
+
+        guard cleanedTemplate != template.template || cleanedNotes != template.notes else {
+            return template
+        }
+
+        Logger.journal.warning("Sanitized inferred template by removing transport/separator markers before rendering.")
+        return InferredTemplate(
+            template: cleanedTemplate,
+            variables: template.variables,
+            confidence: template.confidence,
+            notes: cleanedNotes
+        )
+    }
+
+    private func sanitizeTemplateString(_ text: String) -> String {
+        let lines = text.components(separatedBy: .newlines)
+        var filtered = lines.filter { !isInferenceTransportMarker($0) }
+
+        // If model wrapped template in a markdown fence, unwrap once.
+        if let first = filtered.first?.trimmingCharacters(in: .whitespacesAndNewlines),
+           let last = filtered.last?.trimmingCharacters(in: .whitespacesAndNewlines),
+           first.hasPrefix("```"),
+           last == "```",
+           filtered.count >= 2 {
+            filtered.removeFirst()
+            filtered.removeLast()
+        }
+
+        let cleaned = filtered.joined(separator: "\n").trimmingCharacters(in: .newlines)
+        return cleaned.isEmpty ? text : cleaned
+    }
+
+    private func sanitizePersistedNoteContent(_ text: String) -> String {
+        let filtered = text
+            .components(separatedBy: .newlines)
+            .filter { !isInferenceTransportMarker($0) }
+        let cleaned = filtered.joined(separator: "\n")
+        return cleaned.isEmpty ? text : cleaned
+    }
+
+    private func isInferenceTransportMarker(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+
+        // LLM prompt sample boundary format, e.g. "=== 2026-02-06 (Friday, Week 6) ==="
+        if let regex = Self.sampleBoundaryRegex {
+            let range = NSRange(location: 0, length: trimmed.utf16.count)
+            if regex.firstMatch(in: trimmed, options: [], range: range) != nil {
+                return true
+            }
+        }
+
+        // Template-var boundary format, e.g. "=== {{date:yyyy-MM-dd}} ({{weekday}}, Week {{week_number}}) ==="
+        if let regex = Self.sampleBoundaryTemplateRegex {
+            let range = NSRange(location: 0, length: trimmed.utf16.count)
+            if regex.firstMatch(in: trimmed, options: [], range: range) != nil {
+                return true
+            }
+        }
+
+        // Defensive fallback for date/week style separators wrapped in === ... ===.
+        if trimmed.hasPrefix("==="),
+           trimmed.hasSuffix("==="),
+           (trimmed.contains("Week")
+            || trimmed.contains("{{date")
+            || trimmed.range(of: #"\d{4}-\d{2}-\d{2}"#, options: .regularExpression) != nil) {
+            return true
+        }
+
+        // Future-proof guard for explicit transport markers.
+        if trimmed.hasPrefix("<<<") && trimmed.hasSuffix(">>>") {
+            return true
+        }
+
+        return false
+    }
+
+    private static let sampleBoundaryRegex = try? NSRegularExpression(
+        pattern: #"^===\s*\d{4}-\d{2}-\d{2}\s*\([^)]+\)\s*===\s*$"#
+    )
+
+    private static let sampleBoundaryTemplateRegex = try? NSRegularExpression(
+        pattern: #"^===\s*\{\{date:[^}]+\}\}\s*\([^)]+\)\s*===\s*$"#
+    )
 
     private static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()

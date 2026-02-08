@@ -20,6 +20,10 @@ class LLMService: ObservableObject {
         }
 
         let dateString = DateFormatter.localizedString(from: date, dateStyle: .medium, timeStyle: .short)
+        let allowedFields = extractTemplateFields(from: existingNote)
+        let allowedFieldsText = allowedFields.isEmpty
+            ? "- (no explicit fields detected)"
+            : allowedFields.map { "- \($0)" }.joined(separator: "\n")
 
         // ═══════════════════════════════════════════════════════════════════════════════
         // SYSTEM PROMPT - The Heart of the Template Population Engine
@@ -39,6 +43,8 @@ class LLMService: ObservableObject {
            - Metrics (numbers, scores, durations): Use "metric" type with the numeric value as a string.
            - Yes/No fields: Use "metric" type with "true"/"false".
         5. **Silence is Golden**: If the transcript contains no relevant information for a template section, DO NOT include that field in your output. An empty update list is valid.
+        6. **Field Whitelist (Strict)**: The "field" value MUST exactly match one of the allowed fields provided by the user message.
+        7. **Structure Protection**: Never rewrite or regenerate the template. Return only granular updates.
 
         ## Output Schema (JSON)
         ```json
@@ -101,6 +107,8 @@ class LLMService: ObservableObject {
         - **NEVER** make up information not in the transcript.
         - **ALWAYS** use the exact field name from the template.
         - Format bullet points with `- ` prefix for text sections.
+        - If a mapping is uncertain, skip it.
+        - Do not emit duplicate updates for the same field unless both are clearly necessary.
         - For empty templates, focus on extracting whatever is mentioned.
         - Current date context: \(dateString)
         """
@@ -114,12 +122,15 @@ class LLMService: ObservableObject {
         \(existingNote)
         ```
 
+        ## ALLOWED FIELDS (STRICT WHITELIST)
+        \(allowedFieldsText)
+
         ## VOICE TRANSCRIPT TO PROCESS
         ```
         \(transcript)
         ```
 
-        Analyze the transcript above. According to the transcript, extract all relevant information that maps to sections in the template. Output valid JSON only.
+        Analyze the transcript above. Extract only information that maps to the template and allowed-field whitelist. Output valid JSON only.
         """
 
         let requestBody: [String: Any] = [
@@ -223,6 +234,8 @@ class LLMService: ObservableObject {
         5. If you see patterns like "Week 1" or "Week 52", use {{week_number}}
         6. For navigation links, use {{yesterday:format}} and {{tomorrow:format}}
         7. Set confidence based on how consistent the patterns are across samples
+        8. The lines formatted like "=== 2026-02-06 (Friday, Week 6) ===" are sample separators, not note content. NEVER include them in the template.
+        9. Do not wrap the template in markdown code fences.
 
         ## Example Detection
         If you see across 3 notes:
@@ -252,8 +265,9 @@ class LLMService: ObservableObject {
         ]
 
         let response = try await executeRequest(requestBody: requestBody, responseType: InferredTemplate.self)
-        Logger.ai.notice("Template inference complete. Confidence: \(response.confidence)")
-        return response
+        let sanitized = sanitizeInferredTemplate(response)
+        Logger.ai.notice("Template inference complete. Confidence: \(sanitized.confidence)")
+        return sanitized
     }
 
     // MARK: - Legacy Method (Simple Insight Extraction)
@@ -298,6 +312,119 @@ class LLMService: ObservableObject {
     }
 
     // MARK: - Private Helpers
+
+    private func extractTemplateFields(from note: String) -> [String] {
+        var fields: [String] = []
+        var seen: Set<String> = []
+
+        for rawLine in note.components(separatedBy: .newlines) {
+            let trimmed = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+
+            if trimmed.hasPrefix("#") {
+                if seen.insert(trimmed).inserted {
+                    fields.append(trimmed)
+                }
+                continue
+            }
+
+            guard let metricField = extractMetricField(from: trimmed) else { continue }
+            if seen.insert(metricField).inserted {
+                fields.append(metricField)
+            }
+        }
+
+        return fields
+    }
+
+    private func extractMetricField(from line: String) -> String? {
+        var candidate = line
+        if candidate.hasPrefix("- ") {
+            candidate.removeFirst(2)
+        }
+
+        guard let colon = candidate.firstIndex(of: ":") else { return nil }
+        let name = String(candidate[..<colon]).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return nil }
+        guard name.count <= 80 else { return nil }
+        return name
+    }
+
+    private func sanitizeInferredTemplate(_ template: InferredTemplate) -> InferredTemplate {
+        let cleanedTemplate = sanitizeInferredTemplateText(template.template)
+        let cleanedNotes = template.notes.map { sanitizeInferredTemplateText($0) }
+
+        guard cleanedTemplate != template.template || cleanedNotes != template.notes else {
+            return template
+        }
+
+        Logger.ai.warning("Sanitized inferred template by removing separator/transport markers.")
+        return InferredTemplate(
+            template: cleanedTemplate,
+            variables: template.variables,
+            confidence: template.confidence,
+            notes: cleanedNotes
+        )
+    }
+
+    private func sanitizeInferredTemplateText(_ text: String) -> String {
+        var lines = text.components(separatedBy: .newlines)
+        lines.removeAll { isInferenceSeparatorLine($0) }
+
+        // Unwrap one outer code fence if present.
+        if let first = lines.first?.trimmingCharacters(in: .whitespacesAndNewlines),
+           let last = lines.last?.trimmingCharacters(in: .whitespacesAndNewlines),
+           first.hasPrefix("```"),
+           last == "```",
+           lines.count >= 2 {
+            lines.removeFirst()
+            lines.removeLast()
+        }
+
+        let cleaned = lines.joined(separator: "\n").trimmingCharacters(in: .newlines)
+        return cleaned.isEmpty ? text : cleaned
+    }
+
+    private func isInferenceSeparatorLine(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+
+        if let regex = Self.sampleBoundaryRegex {
+            let range = NSRange(location: 0, length: trimmed.utf16.count)
+            if regex.firstMatch(in: trimmed, options: [], range: range) != nil {
+                return true
+            }
+        }
+
+        if let regex = Self.sampleBoundaryTemplateRegex {
+            let range = NSRange(location: 0, length: trimmed.utf16.count)
+            if regex.firstMatch(in: trimmed, options: [], range: range) != nil {
+                return true
+            }
+        }
+
+        if trimmed.hasPrefix("==="),
+           trimmed.hasSuffix("==="),
+           (trimmed.contains("Week")
+            || trimmed.contains("{{date")
+            || trimmed.range(of: #"\d{4}-\d{2}-\d{2}"#, options: .regularExpression) != nil) {
+            return true
+        }
+
+        if trimmed.hasPrefix("<<<") && trimmed.hasSuffix(">>>") {
+            return true
+        }
+
+        return false
+    }
+
+    private static let sampleBoundaryRegex = try? NSRegularExpression(
+        pattern: #"^===\s*\d{4}-\d{2}-\d{2}\s*\([^)]+\)\s*===\s*$"#
+    )
+
+    private static let sampleBoundaryTemplateRegex = try? NSRegularExpression(
+        pattern: #"^===\s*\{\{date:[^}]+\}\}\s*\([^)]+\)\s*===\s*$"#
+    )
 
     private func executeRequest<T: Decodable>(requestBody: [String: Any], responseType: T.Type) async throws -> T {
         guard let apiKey = KeychainManager.shared.getAPIKey() else {
