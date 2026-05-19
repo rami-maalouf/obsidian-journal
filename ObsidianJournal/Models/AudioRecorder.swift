@@ -50,19 +50,15 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
             )
             try recordingSession.setActive(true, options: .notifyOthersOnDeactivation)
 
-            let docDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            // Change extension to .wav
-            let audioFilename = docDir.appendingPathComponent("recording.wav")
+            let audioFilename = try AudioRecordingStore.shared.makeRecordingURL()
             Logger.audio.debug("Recording path: \(audioFilename.path)")
 
-            // Switch to LinearPCM (WAV) which is safer for WhisperKit
             let settings: [String: Any] = [
-                AVFormatIDKey: Int(kAudioFormatLinearPCM),
-                AVSampleRateKey: 16000, // 16kHz is ideal for Whisper
+                AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+                AVSampleRateKey: 16000,
                 AVNumberOfChannelsKey: 1,
-                AVLinearPCMBitDepthKey: 16,
-                AVLinearPCMIsBigEndianKey: false,
-                AVLinearPCMIsFloatKey: false // Signed Integer PCM
+                AVEncoderBitRateKey: 32000,
+                AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue
             ]
 
             audioRecorder = try AVAudioRecorder(url: audioFilename, settings: settings)
@@ -78,7 +74,7 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
             lastMonitorLogAt = nil
 
             startMonitoring()
-            Logger.audio.notice("Recording started (WAV 16kHz).")
+            Logger.audio.notice("Recording started (AAC M4A 16kHz).")
 
         } catch {
             Logger.audio.error("Failed to start recording: \(error.localizedDescription)")

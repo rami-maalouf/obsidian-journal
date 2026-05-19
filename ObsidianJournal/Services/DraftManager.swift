@@ -7,6 +7,7 @@ class DraftManager: ObservableObject {
     @Published var currentDraft: Draft?
 
     private let draftsFileName = "drafts.json"
+    private let audioRecordingStore = AudioRecordingStore.shared
 
     // Computed properties for views
     var activeDrafts: [Draft] {
@@ -35,8 +36,19 @@ class DraftManager: ObservableObject {
         // Remove empty drafts on launch, except if it's the only one?
         // Actually, just remove all empty ones. The init logic below will create one if needed.
         let originalCount = drafts.count
-        drafts.removeAll { $0.status == .draft && $0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        if drafts.count != originalCount {
+        let emptyDrafts = drafts.filter {
+            $0.status == .draft && $0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        for draft in emptyDrafts {
+            audioRecordingStore.deleteRecordings(draft.recordings)
+        }
+        drafts.removeAll { draft in
+            emptyDrafts.contains(where: { $0.id == draft.id })
+        }
+
+        let removedExpiredRecordings = audioRecordingStore.removeExpiredRecordings(from: &drafts)
+
+        if drafts.count != originalCount || removedExpiredRecordings {
             saveDrafts()
             Logger.ui.info("Cleaned up \(originalCount - self.drafts.count) empty drafts on launch.")
         }
@@ -63,6 +75,15 @@ class DraftManager: ObservableObject {
 
     func updateCurrentDraft(content: String) {
         guard var draft = currentDraft else { return }
+        let isDeletingTranscript = content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !draft.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !draft.recordings.isEmpty
+
+        if isDeletingTranscript {
+            audioRecordingStore.deleteRecordings(draft.recordings)
+            draft.recordings = []
+        }
+
         draft.content = content
         draft.modifiedAt = Date()
 
@@ -97,12 +118,53 @@ class DraftManager: ObservableObject {
         let normalizedDate = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: date) ?? date
         draft.createdAt = normalizedDate
         draft.modifiedAt = Date()
+        draft.recordings = draft.recordings.map { recording in
+            var updated = recording
+            updated.noteDate = normalizedDate.journalDate
+            return updated
+        }
 
         objectWillChange.send()
         currentDraft = draft
 
         if let index = drafts.firstIndex(where: { $0.id == draft.id }) {
             drafts[index] = draft
+        }
+
+        saveDrafts()
+    }
+
+    func attachRecording(_ recording: DraftAudioRecording, to draft: Draft) {
+        guard let index = drafts.firstIndex(where: { $0.id == draft.id }) else { return }
+
+        var updatedDraft = drafts[index]
+        updatedDraft.recordings.append(recording)
+        updatedDraft.modifiedAt = Date()
+        drafts[index] = updatedDraft
+
+        if currentDraft?.id == draft.id {
+            currentDraft = updatedDraft
+        }
+
+        saveDrafts()
+        Logger.audio.info("Attached recording \(recording.id.uuidString) to draft \(draft.id.uuidString)")
+    }
+
+    func markRecordingsSubmitted(for draft: Draft, noteDate: Date) {
+        guard let index = drafts.firstIndex(where: { $0.id == draft.id }) else { return }
+
+        var updatedDraft = drafts[index]
+        updatedDraft.recordings = updatedDraft.recordings.map { recording in
+            var submittedRecording = recording
+            submittedRecording.status = .submitted
+            submittedRecording.noteDate = noteDate.journalDate
+            return submittedRecording
+        }
+
+        drafts[index] = updatedDraft
+
+        if currentDraft?.id == draft.id {
+            currentDraft = updatedDraft
         }
 
         saveDrafts()
@@ -143,6 +205,7 @@ class DraftManager: ObservableObject {
     }
 
     func deleteDraft(_ draft: Draft) {
+        audioRecordingStore.deleteRecordings(draft.recordings)
         drafts.removeAll { $0.id == draft.id }
         // If we deleted the current draft, check if we have any other active drafts
         if currentDraft?.id == draft.id {
@@ -162,6 +225,7 @@ class DraftManager: ObservableObject {
             if oldDraft.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 // Delete the old empty draft
                 Logger.ui.info("Auto-deleting empty draft: \(oldDraft.id)")
+                audioRecordingStore.deleteRecordings(oldDraft.recordings)
                 drafts.removeAll { $0.id == oldDraft.id }
             }
         }
@@ -178,6 +242,7 @@ class DraftManager: ObservableObject {
         let emptyDrafts = drafts.filter { $0.status == .draft && $0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.id != currentDraft?.id }
 
         for draft in emptyDrafts {
+             audioRecordingStore.deleteRecordings(draft.recordings)
              drafts.removeAll { $0.id == draft.id }
              Logger.ui.info("Cleaned up background empty draft: \(draft.id)")
         }
