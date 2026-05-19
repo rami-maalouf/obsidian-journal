@@ -1,5 +1,6 @@
 import SwiftUI
 import AVFoundation
+import os
 
 struct MainEditorView: View {
     @EnvironmentObject var draftManager: DraftManager
@@ -16,6 +17,8 @@ struct MainEditorView: View {
     // Text Editor State
     @State private var cursorPosition: Int = 0
     @State private var isDictating = false
+    @State private var activeRecordingSignature: String?
+    @State private var lastCompletedRecordingSignature: String?
 
     var body: some View {
         NavigationView {
@@ -248,16 +251,36 @@ struct MainEditorView: View {
     }
 
     private func processTranscription(url: URL) {
+        let recordingSignature = signature(for: url)
+
+        if recordingSignature == activeRecordingSignature || recordingSignature == lastCompletedRecordingSignature {
+            Logger.audio.warning("Skipping duplicate transcription request for the same recording.")
+            return
+        }
+
+        activeRecordingSignature = recordingSignature
+
         Task {
+            var shouldRememberSignature = false
+
+            defer {
+                Task { @MainActor in
+                    if activeRecordingSignature == recordingSignature {
+                        activeRecordingSignature = nil
+                        if shouldRememberSignature {
+                            lastCompletedRecordingSignature = recordingSignature
+                        }
+                    }
+                }
+            }
+
             do {
                 var text = try await transcriberService.transcribe(audioURL: url)
-
-                // remove [BLANK_AUDIO] from text
-                text = text.replacingOccurrences(of: "[BLANK_AUDIO]", with: "")
+                shouldRememberSignature = true
 
                 // Skip blank transcriptions - only insert real text
                 guard !text.isEmpty && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                    print("Skipping empty transcription")
+                    Logger.transcription.info("Skipping empty transcription result.")
                     return
                 }
 
@@ -283,9 +306,16 @@ struct MainEditorView: View {
                     cursorPosition += textToInsert.count
                 }
             } catch {
-                print("Transcription error: \(error)")
+                Logger.transcription.error("Transcription error: \(error.localizedDescription)")
             }
         }
+    }
+
+    private func signature(for url: URL) -> String {
+        let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        let fileSize = values?.fileSize ?? 0
+        let modifiedAt = values?.contentModificationDate?.timeIntervalSince1970 ?? 0
+        return "\(url.path)|\(fileSize)|\(modifiedAt)"
     }
 
     private func submitEntry() {

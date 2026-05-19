@@ -61,6 +61,8 @@ class TranscriptionSettings: ObservableObject {
         suiteName: "group.studio.orbitlabs.ignite"
     )
     private static let modelKey = "selectedTranscriptionModel"
+    private static let silenceAutoStopIntervalKey = "silenceAutoStopInterval"
+    static let defaultSilenceAutoStopInterval: TimeInterval = 120
 
     @Published var selectedModel: TranscriptionModel {
         didSet {
@@ -68,7 +70,17 @@ class TranscriptionSettings: ObservableObject {
         }
     }
 
+    @Published var silenceAutoStopInterval: TimeInterval {
+        didSet {
+            saveSilenceAutoStopInterval()
+        }
+    }
+
     private init() {
+        let savedSilenceAutoStopInterval = defaults?.object(
+            forKey: Self.silenceAutoStopIntervalKey
+        ) as? Double
+
         // Restore saved model or default to cloud
         if let savedRawValue = defaults?.string(forKey: Self.modelKey),
             let model = TranscriptionModel(rawValue: savedRawValue)
@@ -83,12 +95,28 @@ class TranscriptionSettings: ObservableObject {
                 "Using default transcription model: Cloud (OpenAI)"
             )
         }
+
+        self.silenceAutoStopInterval =
+            savedSilenceAutoStopInterval ?? Self.defaultSilenceAutoStopInterval
+        Logger.transcription.info(
+            "Using silence auto-stop interval: \(Int(self.silenceAutoStopInterval)) seconds"
+        )
     }
 
     private func saveModel() {
         defaults?.set(selectedModel.rawValue, forKey: Self.modelKey)
         Logger.transcription.info(
             "Saved transcription model: \(self.selectedModel.displayName)"
+        )
+    }
+
+    private func saveSilenceAutoStopInterval() {
+        defaults?.set(
+            silenceAutoStopInterval,
+            forKey: Self.silenceAutoStopIntervalKey
+        )
+        Logger.transcription.info(
+            "Saved silence auto-stop interval: \(Int(self.silenceAutoStopInterval)) seconds"
         )
     }
 }

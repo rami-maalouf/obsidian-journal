@@ -9,6 +9,13 @@ struct SettingsView: View {
     @State private var isReInferring = false
     @Environment(\.dismiss) var dismiss
 
+    private var silenceTimeoutBinding: Binding<Int> {
+        Binding(
+            get: { Int(transcriptionSettings.silenceAutoStopInterval) },
+            set: { transcriptionSettings.silenceAutoStopInterval = TimeInterval($0) }
+        )
+    }
+
     var body: some View {
         NavigationView {
             Form {
@@ -111,6 +118,21 @@ struct SettingsView: View {
                                 .progressViewStyle(.linear)
                         }
                     }
+                }
+
+                Section(header: Text("Recording")) {
+                    Stepper(value: silenceTimeoutBinding, in: 0...600, step: 30) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Auto-stop after silence")
+                            Text(silenceTimeoutDescription)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Text("When recording stays silent for this long, the app stops recording and starts transcription automatically. Set it to Off to keep manual stop only.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 // MARK: - Template Status
@@ -231,6 +253,27 @@ struct SettingsView: View {
                 isReInferring = false
             }
         }
+    }
+
+    private var silenceTimeoutDescription: String {
+        let interval = Int(transcriptionSettings.silenceAutoStopInterval)
+
+        if interval <= 0 {
+            return "Off"
+        }
+
+        if interval < 60 {
+            return "\(interval) sec"
+        }
+
+        let minutes = interval / 60
+        let seconds = interval % 60
+
+        if seconds == 0 {
+            return minutes == 1 ? "1 minute" : "\(minutes) minutes"
+        }
+
+        return "\(minutes)m \(seconds)s"
     }
 }
 

@@ -16,6 +16,11 @@ class TranscriberService: ObservableObject, TranscriberServiceProtocol {
     private var whisperPipe: WhisperKit?
     private var currentModelName: String?
     private var cancellables = Set<AnyCancellable>()
+    private let leakedPromptPhrases = [
+        "this is a personal journal entry",
+        "transcribe naturally with proper punctuation and capitalization",
+        "include filler words if spoken"
+    ]
 
     enum ModelLoadingState: Equatable {
         case notLoaded
@@ -137,8 +142,10 @@ class TranscriberService: ObservableObject, TranscriberServiceProtocol {
             // Combine segments
             let fullText = results.map { $0.text }.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
 
-            Logger.transcription.notice("Transcription completed. Length: \(fullText.count)")
-            return fullText
+            let sanitizedText = sanitizeTranscription(fullText)
+
+            Logger.transcription.notice("Transcription completed. Length: \(sanitizedText.count)")
+            return sanitizedText
 
         } catch {
             Logger.transcription.error("Transcription failed: \(error.localizedDescription)")
@@ -187,9 +194,6 @@ class TranscriberService: ObservableObject, TranscriberServiceProtocol {
         // Temperature - 0 for most deterministic/accurate output
         appendField("temperature", "0")
 
-        // Prompt - guide the model for journal-style transcription
-        appendField("prompt", "This is a personal journal entry. Transcribe naturally with proper punctuation and capitalization. Include filler words if spoken.")
-
         // Response format - simple text
         appendField("response_format", "text")
 
@@ -224,10 +228,75 @@ class TranscriberService: ObservableObject, TranscriberServiceProtocol {
             throw TranscriberError.networkError("Invalid response encoding")
         }
 
-        let trimmedText = transcribedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedText = sanitizeTranscription(
+            transcribedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
         Logger.transcription.notice("Cloud transcription completed. Length: \(trimmedText.count)")
 
         return trimmedText
+    }
+
+    private func sanitizeTranscription(_ text: String) -> String {
+        var sanitizedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !sanitizedText.isEmpty else { return "" }
+
+        sanitizedText = sanitizedText.replacingOccurrences(of: "[BLANK_AUDIO]", with: "")
+
+        for phrase in leakedPromptPhrases {
+            sanitizedText = sanitizedText.replacingOccurrences(
+                of: phrase,
+                with: "",
+                options: [.caseInsensitive]
+            )
+        }
+
+        sanitizedText = collapseRepeatedLines(in: sanitizedText)
+        sanitizedText = sanitizedText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if sanitizedText.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.inverted.contains($0) }) {
+            return ""
+        }
+
+        if looksLikeInstructionLeak(sanitizedText) {
+            Logger.transcription.warning("Dropping transcription because it matched leaked instruction text.")
+            return ""
+        }
+
+        return sanitizedText
+    }
+
+    private func collapseRepeatedLines(in text: String) -> String {
+        let lines = text
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        guard !lines.isEmpty else { return text }
+
+        var deduplicatedLines: [String] = []
+
+        for line in lines {
+            if deduplicatedLines.last?.caseInsensitiveCompare(line) == .orderedSame {
+                continue
+            }
+
+            deduplicatedLines.append(line)
+        }
+
+        return deduplicatedLines.joined(separator: "\n")
+    }
+
+    private func looksLikeInstructionLeak(_ text: String) -> Bool {
+        guard !text.isEmpty else { return false }
+
+        let normalizedText = text
+            .lowercased()
+            .replacingOccurrences(of: ".", with: "")
+            .replacingOccurrences(of: ",", with: "")
+            .replacingOccurrences(of: "\n", with: " ")
+
+        return leakedPromptPhrases.contains { normalizedText.contains($0) }
     }
 }
 

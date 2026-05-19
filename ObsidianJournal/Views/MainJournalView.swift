@@ -137,18 +137,16 @@ struct MainJournalView: View {
             .onAppear {
                 self.journalService = JournalService(vaultManager: vaultManager)
             }
+            .onReceive(audioRecorder.$recordingURL) { url in
+                if let url, !audioRecorder.isRecording {
+                    processRecording(url: url)
+                }
+            }
         }
     }
 
     func finishRecording() {
         audioRecorder.stopRecording()
-
-        guard let url = audioRecorder.recordingURL else {
-            errorMessage = "Recording failed"
-            return
-        }
-
-        processRecording(url: url)
     }
 
     func processRecording(url: URL) {
