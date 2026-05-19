@@ -99,6 +99,14 @@ class TranscriberService: ObservableObject, TranscriberServiceProtocol {
 
         // Route to cloud or local transcription
         if selectedModel.isCloud {
+            guard KeychainManager.shared.getAPIKey()?.isEmpty == false else {
+                Logger.transcription.warning("Cloud transcription selected without an API key; falling back to the local base model.")
+                return try await transcribeLocal(
+                    audioURL: audioURL,
+                    modelName: TranscriptionModel.base.rawValue
+                )
+            }
+
             return try await transcribeCloud(audioURL: audioURL)
         } else {
             return try await transcribeLocal(audioURL: audioURL)
@@ -107,21 +115,19 @@ class TranscriberService: ObservableObject, TranscriberServiceProtocol {
 
     // MARK: - Local Transcription (WhisperKit)
 
-    private func transcribeLocal(audioURL: URL) async throws -> String {
-        guard let pipe = whisperPipe else {
-            if modelLoadingState == .notLoaded || modelLoadingState == .loading {
-                Logger.transcription.warning("Transcription requested but model not ready. Waiting...")
-                await loadCurrentModel()
-                // Check again
-                guard let pipe = whisperPipe else {
-                    throw TranscriberError.modelNotInitialized
-                }
-                return try await performTranscription(pipe: pipe, url: audioURL)
-            }
-            throw TranscriberError.modelNotInitialized
+    private func transcribeLocal(audioURL: URL, modelName: String? = nil) async throws -> String {
+        let requiredModelName = modelName ?? TranscriptionSettings.shared.selectedModel.rawValue
+
+        if whisperPipe == nil || currentModelName != requiredModelName {
+            Logger.transcription.warning("Transcription requested but local model is not ready. Loading \(requiredModelName)...")
+            await loadModel(named: requiredModelName)
         }
 
-        return try await performTranscription(pipe: pipe, url: audioURL)
+        if let pipe = whisperPipe, currentModelName == requiredModelName {
+            return try await performTranscription(pipe: pipe, url: audioURL)
+        }
+
+        throw TranscriberError.modelNotInitialized
     }
 
     private func performTranscription(pipe: WhisperKit, url: URL) async throws -> String {
@@ -197,10 +203,13 @@ class TranscriberService: ObservableObject, TranscriberServiceProtocol {
         // Response format - simple text
         appendField("response_format", "text")
 
+        let uploadFilename = safeUploadFilename(for: audioURL)
+        let mimeType = mimeType(for: audioURL)
+
         // Add audio file
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\n".data(using: .utf8)!)
-        body.append("Content-Type: audio/wav\r\n\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(uploadFilename)\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: \(mimeType)\r\n\r\n".data(using: .utf8)!)
         body.append(audioData)
         body.append("\r\n".data(using: .utf8)!)
 
@@ -209,7 +218,7 @@ class TranscriberService: ObservableObject, TranscriberServiceProtocol {
 
         request.httpBody = body
 
-        Logger.transcription.debug("Sending audio to OpenAI Whisper API...")
+        Logger.transcription.debug("Sending \(uploadFilename) (\(mimeType)) to OpenAI Whisper API...")
 
         let (data, response) = try await URLSession.shared.data(for: request)
 
@@ -234,6 +243,35 @@ class TranscriberService: ObservableObject, TranscriberServiceProtocol {
         Logger.transcription.notice("Cloud transcription completed. Length: \(trimmedText.count)")
 
         return trimmedText
+    }
+
+    private func safeUploadFilename(for url: URL) -> String {
+        let filename = url.lastPathComponent.isEmpty ? "audio.m4a" : url.lastPathComponent
+        return filename
+            .replacingOccurrences(of: "\"", with: "")
+            .replacingOccurrences(of: "\r", with: "")
+            .replacingOccurrences(of: "\n", with: "")
+    }
+
+    private func mimeType(for url: URL) -> String {
+        switch url.pathExtension.lowercased() {
+        case "m4a", "mp4":
+            return "audio/mp4"
+        case "mp3", "mpeg", "mpga":
+            return "audio/mpeg"
+        case "wav":
+            return "audio/wav"
+        case "webm":
+            return "audio/webm"
+        case "aac":
+            return "audio/aac"
+        case "caf":
+            return "audio/x-caf"
+        case "aif", "aiff":
+            return "audio/aiff"
+        default:
+            return "application/octet-stream"
+        }
     }
 
     private func sanitizeTranscription(_ text: String) -> String {

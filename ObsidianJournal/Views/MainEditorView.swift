@@ -24,6 +24,7 @@ struct MainEditorView: View {
     @State private var shareSheetPayload: ShareSheetPayload?
     @State private var isExportingAudio = false
     @State private var audioShareError: String?
+    @State private var transcriptionError: String?
 
     var body: some View {
         GeometryReader { geometry in
@@ -122,6 +123,13 @@ struct MainEditorView: View {
             }
         } message: {
             Text(audioShareError ?? "")
+        }
+        .alert("Transcription Failed", isPresented: transcriptionErrorBinding) {
+            Button("OK", role: .cancel) {
+                transcriptionError = nil
+            }
+        } message: {
+            Text(transcriptionError ?? "")
         }
     }
 
@@ -435,44 +443,51 @@ struct MainEditorView: View {
                 }
             }
 
+            var transcript = ""
+
             do {
-                let text = try await transcriberService.transcribe(audioURL: url)
+                transcript = try await transcriberService.transcribe(audioURL: url)
                 shouldRememberSignature = true
-
-                await MainActor.run {
-                    guard let draft = draftManager.currentDraft else { return }
-                    var insertedText = ""
-
-                    if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        var newContent = draft.content
-
-                        // Ensure we handle index correctly because Swift String indices are not integer offsets.
-                        if cursorPosition > newContent.count {
-                            cursorPosition = newContent.count
-                        }
-                        let index = newContent.index(newContent.startIndex, offsetBy: cursorPosition)
-
-                        let textToInsert = (cursorPosition > 0 ? " " : "") + text
-
-                        newContent.insert(contentsOf: textToInsert, at: index)
-                        draftManager.updateCurrentDraft(content: newContent)
-
-                        cursorPosition += textToInsert.count
-                        insertedText = textToInsert
-                    } else {
-                        Logger.transcription.info("Recording produced an empty transcription result.")
-                    }
-
-                    let recording = AudioRecordingStore.shared.makeRecordingMetadata(
-                        for: url,
-                        noteDate: draft.createdAt.journalDate,
-                        transcriptText: insertedText.trimmingCharacters(in: .whitespacesAndNewlines)
-                    )
-                    draftManager.attachRecording(recording, to: draft)
-                }
             } catch {
                 Logger.transcription.error("Transcription error: \(error.localizedDescription)")
+                await MainActor.run {
+                    transcriptionError = error.localizedDescription
+                }
             }
+
+            await MainActor.run {
+                guard let draft = draftManager.currentDraft else { return }
+                var insertedText = ""
+
+                if !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    var newContent = draft.content
+
+                    // Ensure we handle index correctly because Swift String indices are not integer offsets.
+                    if cursorPosition > newContent.count {
+                        cursorPosition = newContent.count
+                    }
+                    let index = newContent.index(newContent.startIndex, offsetBy: cursorPosition)
+
+                    let textToInsert = (cursorPosition > 0 ? " " : "") + transcript
+
+                    newContent.insert(contentsOf: textToInsert, at: index)
+                    draftManager.updateCurrentDraft(content: newContent)
+
+                    cursorPosition += textToInsert.count
+                    insertedText = textToInsert
+                } else {
+                    Logger.transcription.info("Recording produced an empty transcription result.")
+                }
+
+                let recording = AudioRecordingStore.shared.makeRecordingMetadata(
+                    for: url,
+                    noteDate: draft.createdAt.journalDate,
+                    transcriptText: insertedText.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+                draftManager.attachRecording(recording, to: draft)
+            }
+
+            shouldRememberSignature = true
         }
     }
 
@@ -610,6 +625,17 @@ struct MainEditorView: View {
             set: { isPresented in
                 if !isPresented {
                     audioShareError = nil
+                }
+            }
+        )
+    }
+
+    private var transcriptionErrorBinding: Binding<Bool> {
+        Binding(
+            get: { transcriptionError != nil },
+            set: { isPresented in
+                if !isPresented {
+                    transcriptionError = nil
                 }
             }
         )
