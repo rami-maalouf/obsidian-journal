@@ -505,8 +505,6 @@ struct MainEditorView: View {
                 )
                 draftManager.attachRecording(recording, to: draft)
             }
-
-            shouldRememberSignature = true
         }
     }
 
