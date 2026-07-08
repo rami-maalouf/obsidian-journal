@@ -191,8 +191,8 @@ class TranscriberService: ObservableObject, TranscriberServiceProtocol {
             body.append("\(value)\r\n".data(using: .utf8)!)
         }
 
-        // Model - using whisper-1 (or gpt-4o-transcribe for even better accuracy if available)
-        appendField("model", "whisper-1")
+        // Model - use OpenAI's higher-accuracy GPT-4o transcription model.
+        appendField("model", "gpt-4o-transcribe")
 
         // Language - explicitly set to English for better accuracy and faster processing
         appendField("language", "en")

@@ -7,6 +7,7 @@ struct MainEditorView: View {
     @EnvironmentObject var draftManager: DraftManager
     @StateObject private var audioRecorder = AudioRecorder()
     @StateObject private var transcriberService = TranscriberService()
+    @ObservedObject private var transcriptionSettings = TranscriptionSettings.shared
     @EnvironmentObject var journalService: JournalService
     @EnvironmentObject var vaultManager: VaultManager // Access to shared VaultManager
 
@@ -291,7 +292,17 @@ struct MainEditorView: View {
         }
 
         ToolbarItem(placement: .navigationBarTrailing) {
-            HStack {
+            HStack(spacing: 12) {
+                Button(action: {
+                    transcriptionSettings.cycleSilenceAutoStopConfiguration()
+                }) {
+                    silenceAutoStopToolbarLabel
+                }
+                .accessibilityLabel(
+                    transcriptionSettings.silenceAutoStopConfiguration.accessibilityLabel
+                )
+                .accessibilityHint("Cycles silence auto-stop mode")
+
                 Button(action: { showArchive.toggle() }) {
                     Image(systemName: "archivebox")
                 }
@@ -335,6 +346,14 @@ struct MainEditorView: View {
                      .clipShape(Capsule())
                  }
              }
+        }
+    }
+
+    private var silenceAutoStopToolbarLabel: some View {
+        HStack(spacing: 4) {
+            Image(systemName: transcriptionSettings.silenceAutoStopConfiguration.systemImage)
+            Text(transcriptionSettings.silenceAutoStopConfiguration.headerTitle)
+                .font(.caption.weight(.semibold))
         }
     }
 

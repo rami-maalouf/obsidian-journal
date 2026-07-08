@@ -53,6 +53,80 @@ enum TranscriptionModel: String, CaseIterable, Codable, Identifiable {
     }
 }
 
+enum SilenceAutoStopConfiguration: String, CaseIterable, Identifiable {
+    case thirtySeconds
+    case threeMinutes
+    case off
+
+    var id: String { rawValue }
+
+    var interval: TimeInterval {
+        switch self {
+        case .thirtySeconds:
+            return 30
+        case .threeMinutes:
+            return 180
+        case .off:
+            return 0
+        }
+    }
+
+    var headerTitle: String {
+        switch self {
+        case .thirtySeconds:
+            return "30s"
+        case .threeMinutes:
+            return "3m"
+        case .off:
+            return "Off"
+        }
+    }
+
+    var accessibilityLabel: String {
+        switch self {
+        case .thirtySeconds:
+            return "Auto-stop after 30 seconds of silence"
+        case .threeMinutes:
+            return "Auto-stop after 3 minutes of silence"
+        case .off:
+            return "Silence auto-stop off"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .thirtySeconds, .threeMinutes:
+            return "timer"
+        case .off:
+            return "infinity"
+        }
+    }
+
+    var next: SilenceAutoStopConfiguration {
+        switch self {
+        case .thirtySeconds:
+            return .threeMinutes
+        case .threeMinutes:
+            return .off
+        case .off:
+            return .thirtySeconds
+        }
+    }
+
+    static func closest(to interval: TimeInterval) -> SilenceAutoStopConfiguration {
+        guard interval > 0 else { return .off }
+
+        let enabledConfigurations: [SilenceAutoStopConfiguration] = [
+            .thirtySeconds,
+            .threeMinutes,
+        ]
+
+        return enabledConfigurations.min {
+            abs($0.interval - interval) < abs($1.interval - interval)
+        } ?? .threeMinutes
+    }
+}
+
 /// Manages transcription preferences with persistence
 class TranscriptionSettings: ObservableObject {
     static let shared = TranscriptionSettings()
@@ -62,7 +136,9 @@ class TranscriptionSettings: ObservableObject {
     )
     private static let modelKey = "selectedTranscriptionModel"
     private static let silenceAutoStopIntervalKey = "silenceAutoStopInterval"
-    static let defaultSilenceAutoStopInterval: TimeInterval = 120
+    static let defaultSilenceAutoStopConfiguration: SilenceAutoStopConfiguration = .threeMinutes
+    static let defaultSilenceAutoStopInterval: TimeInterval =
+        defaultSilenceAutoStopConfiguration.interval
 
     @Published var selectedModel: TranscriptionModel {
         didSet {
@@ -73,6 +149,15 @@ class TranscriptionSettings: ObservableObject {
     @Published var silenceAutoStopInterval: TimeInterval {
         didSet {
             saveSilenceAutoStopInterval()
+        }
+    }
+
+    var silenceAutoStopConfiguration: SilenceAutoStopConfiguration {
+        get {
+            SilenceAutoStopConfiguration.closest(to: silenceAutoStopInterval)
+        }
+        set {
+            silenceAutoStopInterval = newValue.interval
         }
     }
 
@@ -96,11 +181,16 @@ class TranscriptionSettings: ObservableObject {
             )
         }
 
-        self.silenceAutoStopInterval =
-            savedSilenceAutoStopInterval ?? Self.defaultSilenceAutoStopInterval
+        self.silenceAutoStopInterval = SilenceAutoStopConfiguration.closest(
+            to: savedSilenceAutoStopInterval ?? Self.defaultSilenceAutoStopInterval
+        ).interval
         Logger.transcription.info(
             "Using silence auto-stop interval: \(Int(self.silenceAutoStopInterval)) seconds"
         )
+    }
+
+    func cycleSilenceAutoStopConfiguration() {
+        silenceAutoStopConfiguration = silenceAutoStopConfiguration.next
     }
 
     private func saveModel() {
