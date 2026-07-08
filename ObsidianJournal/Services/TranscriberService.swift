@@ -12,6 +12,7 @@ class TranscriberService: ObservableObject, TranscriberServiceProtocol {
     @Published var modelLoadingState: ModelLoadingState = .notLoaded
     @Published var downloadProgress: Double = 0.0
     @Published var isDownloading = false
+    @Published var shareTranscriptionError: String?
 
     private var whisperPipe: WhisperKit?
     private var currentModelName: String?
