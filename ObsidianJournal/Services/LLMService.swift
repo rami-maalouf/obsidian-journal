@@ -20,35 +20,7 @@ class LLMService: ObservableObject {
         }
 
         let dateString = DateFormatter.localizedString(from: date, dateStyle: .medium, timeStyle: .short)
-
-        let systemPrompt = """
-        You are a precision data extraction agent for a personal daily note journal.
-
-        ## Your Mission
-        Read the voice transcript and fill in ONLY the fields you can ground in what was said.
-        Output a single JSON object matching the provided schema exactly.
-
-        ## Rules
-        1. **Grounding**: Every non-null value MUST be traceable to the transcript. Never fabricate.
-        2. **Null by default**: If a field is not mentioned or clearly implied, set it to null.
-        3. **Ratings (1-10)**: Only set metadata ratings when the user states a number or clear score
-           (e.g. "energy was a 7", "I'd give today a 6"). Do not infer ratings from mood alone.
-        4. **Arrays**: big_3 and grateful_for are always length 3. Use null per slot when not mentioned.
-        5. **habits_planned**: true only if the user says they planned their habits; false if they say they didn't; null if not mentioned.
-        6. **communication reflection**: Set the whole `communication` object to null unless the user reflects on communication specifically. When set, use went_well and didnt_go_well sub-keys.
-        7. **storyworthy**: Set `metadata.storyworthy` to true if the user marks the day as storyworthy at any point
-           (e.g. "@storyworthy", "story worthy day", "this is a storyworthy day", "today was story worthy").
-           Set false only if they explicitly say it is NOT storyworthy. null if not mentioned.
-        8. **accomplishment**: Set `metadata.accomplishment` to true if the user marks accomplishments at any point
-           (e.g. "@accomplishment", "accomplishment day", "today's accomplishment", "this is an accomplishment").
-           Set false only if they explicitly say there are no accomplishments to tag. null if not mentioned.
-        9. **Preserve voice**: Use the user's words where possible. Light cleanup only (punctuation, filler removal).
-        10. **processing_notes**: Brief debug note listing which sections were populated.
-
-        \(RamiDailyNoteSchema.fieldGuide)
-
-        Current date context: \(dateString)
-        """
+        let systemPrompt = RamiDailyNoteSchema.systemPrompt(dateContext: dateString)
 
         let userPrompt = """
         ## VOICE TRANSCRIPT
