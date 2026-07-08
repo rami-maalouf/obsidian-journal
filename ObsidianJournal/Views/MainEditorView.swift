@@ -26,6 +26,7 @@ struct MainEditorView: View {
     @State private var isExportingAudio = false
     @State private var audioShareError: String?
     @State private var transcriptionError: String?
+    @State private var submissionError: String?
 
     var body: some View {
         GeometryReader { geometry in
@@ -131,6 +132,13 @@ struct MainEditorView: View {
             }
         } message: {
             Text(transcriptionError ?? "")
+        }
+        .alert("Send Failed", isPresented: submissionErrorBinding) {
+            Button("OK", role: .cancel) {
+                submissionError = nil
+            }
+        } message: {
+            Text(submissionError ?? "")
         }
     }
 
@@ -550,8 +558,10 @@ struct MainEditorView: View {
                     draftManager.archiveDraft(draft)
                 }
             } catch {
-                print("Submission failed: \(error)")
-                // TODO: Show error alert
+                Logger.journal.error("Submission failed: \(error.localizedDescription)")
+                await MainActor.run {
+                    submissionError = error.localizedDescription
+                }
             }
         }
     }
@@ -653,6 +663,17 @@ struct MainEditorView: View {
             set: { isPresented in
                 if !isPresented {
                     transcriptionError = nil
+                }
+            }
+        )
+    }
+
+    private var submissionErrorBinding: Binding<Bool> {
+        Binding(
+            get: { submissionError != nil },
+            set: { isPresented in
+                if !isPresented {
+                    submissionError = nil
                 }
             }
         )
