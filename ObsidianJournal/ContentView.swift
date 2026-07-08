@@ -36,9 +36,28 @@ struct ContentView: View {
                 .shadow(radius: 10)
             }
         }
+        .alert("Shared Audio Transcription Failed", isPresented: shareTranscriptionErrorBinding) {
+            Button("OK", role: .cancel) {
+                transcriberService.shareTranscriptionError = nil
+            }
+        } message: {
+            Text(transcriberService.shareTranscriptionError ?? "")
+        }
+    }
+
+    private var shareTranscriptionErrorBinding: Binding<Bool> {
+        Binding(
+            get: { transcriberService.shareTranscriptionError != nil },
+            set: { isPresented in
+                if !isPresented {
+                    transcriberService.shareTranscriptionError = nil
+                }
+            }
+        )
     }
 }
 
 #Preview {
     ContentView()
+        .environmentObject(TranscriberService())
 }

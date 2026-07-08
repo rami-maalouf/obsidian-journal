@@ -34,4 +34,25 @@ class PermissionsManager: ObservableObject {
             }
         }
     }
+
+    @MainActor
+    func ensureMicrophonePermission() async -> Bool {
+        checkMicrophonePermission()
+
+        switch microphonePermission {
+        case .authorized:
+            return true
+        case .denied:
+            return false
+        case .notDetermined:
+            return await withCheckedContinuation { continuation in
+                AVAudioSession.sharedInstance().requestRecordPermission { [weak self] granted in
+                    Task { @MainActor in
+                        self?.microphonePermission = granted ? .authorized : .denied
+                        continuation.resume(returning: granted)
+                    }
+                }
+            }
+        }
+    }
 }

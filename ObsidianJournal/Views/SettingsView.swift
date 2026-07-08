@@ -4,7 +4,7 @@ struct SettingsView: View {
     @EnvironmentObject var vaultManager: VaultManager
     @StateObject private var llmService = LLMService()
     @ObservedObject private var transcriptionSettings = TranscriptionSettings.shared
-    @StateObject private var transcriberService = TranscriberService()
+    @EnvironmentObject var transcriberService: TranscriberService
     @State private var apiKey: String = ""
     @State private var isReInferring = false
     @Environment(\.dismiss) var dismiss
@@ -237,4 +237,5 @@ struct SettingsView: View {
 #Preview {
     SettingsView()
         .environmentObject(VaultManager())
+        .environmentObject(TranscriberService())
 }

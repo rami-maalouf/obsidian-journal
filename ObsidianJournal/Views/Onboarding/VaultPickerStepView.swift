@@ -10,6 +10,7 @@ struct VaultPickerStepView: View {
     @State private var showPicker = false
     @State private var showButton = false
     @State private var isPickerPresented = false
+    @State private var isInferringTemplate = false
 
     var body: some View {
         ZStack {
@@ -182,6 +183,7 @@ struct VaultPickerStepView: View {
             case .success(let urls):
                 if let url = urls.first {
                     vaultManager.setVaultFolder(url)
+                    inferTemplateIfNeeded()
                     withAnimation(.spring()) {
                         showButton = true
                     }
@@ -201,6 +203,35 @@ struct VaultPickerStepView: View {
                 withAnimation(.easeOut(duration: 0.5).delay(0.5)) {
                     showButton = true
                 }
+                inferTemplateIfNeeded()
+            }
+        }
+    }
+
+    private func inferTemplateIfNeeded() {
+        guard vaultManager.inferredTemplate == nil else { return }
+        guard let apiKey = KeychainManager.shared.getAPIKey(), !apiKey.isEmpty else { return }
+        guard !isInferringTemplate else { return }
+
+        isInferringTemplate = true
+
+        Task {
+            defer {
+                Task { @MainActor in
+                    isInferringTemplate = false
+                }
+            }
+
+            do {
+                let samples = try vaultManager.fetchRecentDailyNotes(count: 5)
+                guard !samples.isEmpty else { return }
+
+                let template = try await LLMService().inferTemplate(from: samples)
+                await MainActor.run {
+                    vaultManager.saveTemplate(template)
+                }
+            } catch {
+                // best-effort during onboarding; user can re-run from Settings
             }
         }
     }

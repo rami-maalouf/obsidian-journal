@@ -1,4 +1,5 @@
 import SwiftUI
+import os
 
 @main
 struct IgniteApp: App {
@@ -73,8 +74,10 @@ struct IgniteApp: App {
                 print("Cleaned up temp audio file")
 
             } catch {
-                print("Transcription failed with error: \(error)")
-                print("Error description: \(error.localizedDescription)")
+                Logger.transcription.error("Share extension transcription failed: \(error.localizedDescription)")
+                await MainActor.run {
+                    transcriberService.shareTranscriptionError = error.localizedDescription
+                }
             }
         }
     }
