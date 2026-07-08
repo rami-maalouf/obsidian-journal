@@ -6,6 +6,7 @@ import UIKit
 struct MainEditorView: View {
     @EnvironmentObject var draftManager: DraftManager
     @StateObject private var audioRecorder = AudioRecorder()
+    @StateObject private var permissionsManager = PermissionsManager()
     @EnvironmentObject var transcriberService: TranscriberService
     @ObservedObject private var transcriptionSettings = TranscriptionSettings.shared
     @EnvironmentObject var journalService: JournalService
@@ -27,6 +28,7 @@ struct MainEditorView: View {
     @State private var audioShareError: String?
     @State private var transcriptionError: String?
     @State private var submissionError: String?
+    @State private var microphonePermissionError: String?
 
     var body: some View {
         GeometryReader { geometry in
@@ -139,6 +141,13 @@ struct MainEditorView: View {
             }
         } message: {
             Text(submissionError ?? "")
+        }
+        .alert("Microphone Access Required", isPresented: microphonePermissionErrorBinding) {
+            Button("OK", role: .cancel) {
+                microphonePermissionError = nil
+            }
+        } message: {
+            Text(microphonePermissionError ?? "")
         }
     }
 
@@ -440,9 +449,20 @@ struct MainEditorView: View {
         if audioRecorder.isRecording {
             audioRecorder.stopRecording()
             isDictating = false
-        } else {
-            audioRecorder.startRecording()
-            isDictating = true
+            return
+        }
+
+        Task {
+            let granted = await permissionsManager.ensureMicrophonePermission()
+            await MainActor.run {
+                if granted {
+                    audioRecorder.startRecording()
+                    isDictating = true
+                } else {
+                    microphonePermissionError =
+                        "Microphone access is required to record voice journal entries. Enable it in Settings > Ignite > Microphone."
+                }
+            }
         }
     }
 
@@ -674,6 +694,17 @@ struct MainEditorView: View {
             set: { isPresented in
                 if !isPresented {
                     submissionError = nil
+                }
+            }
+        )
+    }
+
+    private var microphonePermissionErrorBinding: Binding<Bool> {
+        Binding(
+            get: { microphonePermissionError != nil },
+            set: { isPresented in
+                if !isPresented {
+                    microphonePermissionError = nil
                 }
             }
         )
