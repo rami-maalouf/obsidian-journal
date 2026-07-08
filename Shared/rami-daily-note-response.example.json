@@ -1,0 +1,56 @@
+{
+  "metadata": {
+    "dreams": "ali was taking care of me. my mom picking me up from school.",
+    "summary": "finishing v2 of my first video for expo",
+    "storyworthy": false,
+    "accomplishment": true,
+    "intention": 5,
+    "discipline": 6,
+    "focus": 4,
+    "courage": 6,
+    "purpose": 6,
+    "energy": 5,
+    "communication": 5,
+    "uniqueness": 4,
+    "rating": 5
+  },
+  "reminders": {
+    "big_3": [
+      "finish expo video v2",
+      "review PR feedback",
+      null
+    ],
+    "grateful_for": [
+      "my health",
+      "supportive friends",
+      "having meaningful work"
+    ],
+    "habits_planned": true
+  },
+  "morning_mindset": {
+    "excited_for": "shipping the expo video",
+    "one_word_and_because": "focused because I need to close the loop on v2",
+    "someone_needs_me": null,
+    "potential_obstacle": null,
+    "surprise_someone": null,
+    "excellence_action": null,
+    "bold_action": null,
+    "coach_would_say": null,
+    "would_do_if_no_fail": null,
+    "goal": "ship expo video v2",
+    "bottleneck": "editing polish",
+    "success_criteria": "video exported and shared with the team"
+  },
+  "reflection": {
+    "accomplishments": "Finished v2 of the expo video and got positive feedback from the team.",
+    "what_i_controlled": "I controlled my focus blocks and stayed off distractions during editing.",
+    "obstacles": "Got stuck on the intro transition. Dealt with it by simplifying the cut instead of over-engineering.",
+    "moral_compass": null,
+    "improvements": "Block 30 minutes tomorrow morning for thumbnail and caption before context switching.",
+    "communication": {
+      "went_well": "Clear async update in Slack about timeline.",
+      "didnt_go_well": "Didn't voice my concern about scope creep early enough."
+    }
+  },
+  "processing_notes": "Extracted ratings, summary, dreams, accomplishments, and communication reflection from evening voice dump."
+}
