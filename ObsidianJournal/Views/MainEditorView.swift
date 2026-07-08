@@ -6,7 +6,7 @@ import UIKit
 struct MainEditorView: View {
     @EnvironmentObject var draftManager: DraftManager
     @StateObject private var audioRecorder = AudioRecorder()
-    @StateObject private var transcriberService = TranscriberService()
+    @EnvironmentObject var transcriberService: TranscriberService
     @ObservedObject private var transcriptionSettings = TranscriptionSettings.shared
     @EnvironmentObject var journalService: JournalService
     @EnvironmentObject var vaultManager: VaultManager // Access to shared VaultManager
